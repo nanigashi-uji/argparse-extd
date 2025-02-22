@@ -164,7 +164,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
         self.option_key_alist['configfile'], cargs = self.__class__.list_opt_arg(short_opt=short_opt,
                                                                     long_opt=long_opt, dest=kwds.get('dest'))
         if len(cargs)>0:
-            self.add_argument(*cargs, type=str, action=self.__class__.ConfigActionExt,
+            self.add_argument(*cargs, type=str, action=self.__class__.ConfigActionExtd,
                               help=help_txt,
                               **{k:v for k,v in kwds.items() if not k in ('action', 'help', 'type') })
 
