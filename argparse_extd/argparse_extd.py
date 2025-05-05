@@ -6,6 +6,7 @@ import sys
 import argparse
 import inspect
 import io
+import base64
 
 import json
 import bz2
@@ -15,15 +16,20 @@ import yaml
 import toml
 import configparser
 
+
 class ArgumentParserExtd(argparse.ArgumentParser):
     """
     Class for set configuration by file contents and command-line options
     """
-    INI_SECTION  = 'DEFAULT'
+    INI_SECTION  = configparser.DEFAULTSECT
     TOML_SECTION = 'DEFAULT'
 
     CONFIG_FORMAT = ('ini', 'yaml', 'json', 'toml')
     COMPRESS_EXT  = ('.bz2', '.gz', '.xz')
+
+    SERIALIZE_KEY_TYPE  = '__type__'
+    SERIALIZE_KEY_VALUE = '__value__'
+    SERIALIZE_DICT_KEYS = { SERIALIZE_KEY_TYPE, SERIALIZE_KEY_VALUE }
 
     class NamespaceExtd(argparse.Namespace):
         """
@@ -37,18 +43,19 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                 return self.__dict__[name]
             raise AttributeError('%s object has no attribute %s' % (repr(self.__class__.__name__), repr(name)))
 
-        def __setattr__(self, name, value):
+        def __setitem__(self, name, value):
             self.__dict__[name] = value
 
         def __getitem__(self, name):
             return self.__dict__[name]
 
         def to_json(self):
-            return json.dumps(self.__dict__, indent=4)
+            __outer_scope__ = self.__class__.__qualname__.removesuffix('.'+self.__class__.__name__)
+            return json.dumps(self.__dict__, indent=4, default=eval(__outer_scope__).json_custom_serializer)
 
         @classmethod
         def from_json(cls, json_str:str):
-            return cls(**json.loads(json_str))
+            return cls(**json.loads(json_str, object_hook=eval(__outer_scope__).json_custom_object_hook))
 
         def update_from_dict(self, data):
             for key, value in data.items():
@@ -56,6 +63,145 @@ class ArgumentParserExtd(argparse.ArgumentParser):
 
         def to_dict(self):
             return self.__dict__.copy()
+
+    @classmethod
+    def json_custom_serializer(cls, obj):
+        if isinstance(obj, bytes):
+            return {cls.SERIALIZE_KEY_TYPE: 'bytes', 
+                    cls.SERIALIZE_KEY_VALUE: base64.b64encode(obj).decode(encoding='utf-8') }
+        if isinstance(obj, bytearray):
+            return {cls.SERIALIZE_KEY_TYPE: 'bytearray',
+                    cls.SERIALIZE_KEY_VALUE: base64.b64encode(bytes(obj)).decode(encoding='utf-8')}
+        raise TypeError('Object of type %s is not JSON serializable' % (type(obj).__name__, ) )
+
+    @classmethod
+    def json_custom_object_hook(cls, obj):
+        if isinstance(obj, dict) and cls.SERIALIZE_DICT_KEYS.issubset(obj):
+            if obj[cls.SERIALIZE_KEY_TYPE] == 'bytes':
+                return base64.b64decode(obj[cls.SERIALIZE_KEY_VALUE].encode(encoding='utf-8'))
+            if obj[self.__class__.SERIALIZE_KEY_TYPE] == 'bytearray':
+                return bytearray(base64.b64decode(obj[cls.SERIALIZE_KEY_VALUE].encode(encoding='utf-8')))
+        return obj
+
+    @classmethod
+    def encode_byte_dict_key(cls, key, sep1='::', sep2='__', avoid_eq_in_key=False):
+        if isinstance(key, (tuple, frozenset)):
+            return (sep1+cls.__name__+sep1+sep2+type(key).__name__+sep2+sep1
+                    +json.dumps([cls.encode_bytes_base64(i) for i in key], default=cls.json_custom_serializer))
+        if avoid_eq_in_key:
+            if isinstance(key, bytes):
+                return (sep1+cls.__name__+sep1+sep2+type(key).__name__+sep2+sep1
+                        +base64.b64encode(key).decode(encoding='utf-8').replace("=","@"))
+            return key
+            
+        if isinstance(key, bytes):
+            return (sep1+cls.__name__+sep1+sep2+type(key).__name__+sep2+sep1
+                    +base64.b64encode(key).decode(encoding='utf-8'))
+        return key
+
+    @classmethod
+    def decode_byte_dict_key(cls, key, sep1='::', sep2='__', avoid_eq_in_key=False):
+
+        if not isinstance(key, str):
+            if avoid_eq_in_key:
+                return key
+            return key
+
+        type_hdr_b = sep1+cls.__name__+sep1+sep2+'bytes'+sep2+sep1
+        if key.startswith(type_hdr_b) or key.startswith(type_hdr_b.lower()) :
+            if avoid_eq_in_key:
+                return base64.b64decode(key[len(type_hdr_b):].replace("@","=").encode(encoding='utf-8'))
+            return base64.b64decode(key[len(type_hdr_b):].encode(encoding='utf-8'))
+
+        type_hdr_t = sep1+cls.__name__+sep1+sep2+'tuple'+sep2+sep1
+        if key.startswith(type_hdr_t) or key.startswith(type_hdr_t.lower()) :
+            return tuple(json.loads(key[len(type_hdr_b):].encode(encoding='utf-8'),
+                                    object_hook=cls.json_custom_object_hook))
+        
+        type_hdr_f = sep1+cls.__name__+sep1+sep2+'frozenset'+sep2+sep1
+        if key.startswith(type_hdr_f) or key.startswith(type_hdr_f.lower()) :
+            return frozenset(json.loads(key[len(type_hdr_f):].encode(encoding='utf-8'),
+                                        object_hook=cls.json_custom_object_hook))
+        if avoid_eq_in_key:
+            return key
+        return key
+    
+    @classmethod
+    def encode_bytes_base64(cls, obj, sep1='::', sep2='__', avoid_eq_in_key=False):
+
+        if isinstance(obj, (bytes, bytearray)):
+            return {cls.SERIALIZE_KEY_TYPE: type(obj).__name__,
+                    cls.SERIALIZE_KEY_VALUE: base64.b64encode(obj).decode(encoding='utf-8')}
+        
+        if isinstance(obj, (tuple, set, frozenset)):
+            return {cls.SERIALIZE_KEY_TYPE: type(obj).__name__,
+                    cls.SERIALIZE_KEY_VALUE: [ cls.encode_bytes_base64(i, sep1=sep1, sep2=sep2,
+                                                                       avoid_eq_in_key=avoid_eq_in_key) for i in obj ]}
+
+        if isinstance(obj, list):
+            return [ cls.encode_bytes_base64(i, sep1=sep1, sep2=sep2,
+                                              avoid_eq_in_key=avoid_eq_in_key) for i in obj ]
+
+        if isinstance(obj, dict):
+            return {cls.encode_byte_dict_key(k, sep1=sep1, sep2=sep2,
+                                              avoid_eq_in_key=avoid_eq_in_key):
+                    cls.encode_bytes_base64(v, sep1=sep1, sep2=sep2,
+                                             avoid_eq_in_key=avoid_eq_in_key) for k,v in obj.items()}
+
+        return obj
+
+    @classmethod
+    def decode_bytes_base64(cls, obj, sep1='::', sep2='__', avoid_eq_in_key=False):
+
+        if isinstance(obj, dict) and cls.SERIALIZE_DICT_KEYS.issubset(obj):
+            if obj[cls.SERIALIZE_KEY_TYPE] == 'bytes':
+                return base64.b64decode(obj[cls.SERIALIZE_KEY_VALUE].encode(encoding='utf-8'))
+            if obj[cls.SERIALIZE_KEY_TYPE] == 'bytearray':
+                return bytearray(base64.b64decode(obj[cls.SERIALIZE_KEY_VALUE].encode(encoding='utf-8')))
+            if obj[cls.SERIALIZE_KEY_TYPE] == 'tuple':
+                return tuple([ cls.decode_bytes_base64(i, sep1=sep1, sep2=sep2, avoid_eq_in_key=avoid_eq_in_key) 
+                               for i in obj[cls.SERIALIZE_KEY_VALUE]])
+            if obj[cls.SERIALIZE_KEY_TYPE] == 'set':
+                return set([ cls.decode_bytes_base64(i, sep1=sep1, sep2=sep2, avoid_eq_in_key=avoid_eq_in_key) 
+                             for i in obj[cls.SERIALIZE_KEY_VALUE]])
+            if obj[cls.SERIALIZE_KEY_TYPE] == 'frozenset':
+                return frozenset([ cls.decode_bytes_base64(i, sep1=sep1, sep2=sep2, avoid_eq_in_key=avoid_eq_in_key) 
+                                   for i in obj[cls.SERIALIZE_KEY_VALUE]])
+            
+        if isinstance(obj, list):
+            return [ cls.decode_bytes_base64(i, sep1=sep1, sep2=sep2, avoid_eq_in_key=avoid_eq_in_key) for i in obj ]
+
+        if isinstance(obj, dict):
+            return {cls.decode_byte_dict_key(k, sep1=sep1, sep2=sep2, avoid_eq_in_key=avoid_eq_in_key):
+                    cls.decode_bytes_base64(v, sep1=sep1, sep2=sep2, avoid_eq_in_key=avoid_eq_in_key) for k,v in obj.items()}
+
+        return obj
+
+    @classmethod
+    def flatten_dict(cls, d:dict, parent_key:str='', sep:str='________')->dict:
+        items = {}
+        for k, v in d.items():
+            new_key = ("%s%s%s" % (parent_key, sep, k)) if parent_key else k
+            if isinstance(v, dict):
+                items.update(cls.flatten_dict(v, new_key, sep=sep))
+            else:
+                items[new_key] = v if isinstance(v, str) else json.dumps(v, default=cls.json_custom_serializer) 
+        return items
+
+    @classmethod
+    def unflatten_dict(cls, d:dict, sep:str='________')->dict:
+        result = {}
+        for flat_key, v in d.items():
+            keys = flat_key.split(sep)
+            current = result
+            for part in keys[:-1]:
+                current = current.setdefault(part, {})
+            try:
+                current[keys[-1]] = json.loads(v, object_hook=cls.json_custom_object_hook)
+            except:
+                current[keys[-1]] = v
+        return result
+
 
     class ConfigActionExtd(argparse.Action):
         """
@@ -76,7 +222,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
 
     def __init__(self, conf_path=None, exclude_save:str|list|set|tuple=None, 
                  json_indent=4, yaml_default_flow_style=False,
-                 ini_section='DEFAULT', toml_section='DEFAULT', **kwds):
+                 ini_section=INI_SECTION, toml_section=TOML_SECTION, **kwds):
 
         super().__init__(**kwds)
         self.option_key_alist        = {}
@@ -174,23 +320,33 @@ class ArgumentParserExtd(argparse.ArgumentParser):
     def add_argument_save_config(self, short_opt:str='-S', long_opt:str='--save-config',
                                  default_path:str=None, help_txt:str='path of the configuration file to be saved', **kwds):
         self.option_key_alist['save_configfile'], cargs = self.__class__.list_opt_arg(short_opt=short_opt,
-                                                                         long_opt=long_opt, dest=kwds.get('dest'))
+                                                                                      long_opt=long_opt, dest=kwds.get('dest'))
         if len(cargs)>0:
             self.add_argument(*cargs, type=str, nargs='?', default=None, const=default_path, help=help_txt,
                               **{k:v for k,v in kwds.items() if not k in ('type', 'nargs', 'default', 'help')})
+
         if isinstance(self.option_key_alist['save_configfile'], str) and self.option_key_alist['save_configfile']:
             self.append_write_config_exclude(options=self.option_key_alist['save_configfile'])
+            dest_def=str(self.option_key_alist['save_configfile'])
+            def_keywords = '-default'
+            self.add_argument("--"+dest_def.replace('_', '-')+def_keywords,
+                              dest=dest_def, action='store_const', const=default_path, 
+                              help=help_txt+("(Use default: %s )" % (default_path,)))
+            self.append_write_config_exclude(options=self.option_key_alist['save_configfile']+def_keywords.replace('-', '_'))
 
     def save_config_action(self, exclude_keys:list|tuple|set|dict=[],
-                           f_mode=0o644, mk_dir:bool=True, d_mode=0o755):
+                           f_mode=0o644, mk_dir:bool=True, d_mode=0o755, **kwds):
+
         save_path=self.namespace[self.option_key_alist['save_configfile']]
         if isinstance(save_path,str) and save_path:
-            self.write_config(self, exclude_keys=exclude_keys, 
-                              f_mode=f_mode, mk_dir=mk_dir, d_mode=d_mode)
+            self.write_config(f_path=save_path, 
+                              exclude_keys=exclude_keys,
+                              f_mode=f_mode, mk_dir=mk_dir, d_mode=d_mode, **kwds)
+
 
     @classmethod
     def load_configfile(cls, namespace, conf_path, verbose=False,
-                        ini_section='DEFAULT', toml_section='DEFAULT'):
+                        ini_section=INI_SECTION, toml_section=TOML_SECTION):
         if isinstance(conf_path,str) and conf_path and os.path.exists(conf_path):
             namespace.update_from_dict(data=cls.read_config(conf_path,
                                                             ini_section=ini_section,
@@ -206,7 +362,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                        ini_section=self.__class__.INI_SECTION, toml_section=self.__class__.TOML_SECTION)
 
     @classmethod
-    def read_config(cls, file_path:str, ini_section='DEFAULT', toml_section='DEFAULT') -> dict:
+    def read_config(cls, file_path:str, ini_section=INI_SECTION, toml_section=TOML_SECTION) -> dict:
         bn,ext = os.path.splitext(file_path)
         if ext.lower() in cls.COMPRESS_EXT:
             with cls.open_compressed(file_path, 'rt', encoding='utf-8') as f:
@@ -215,19 +371,49 @@ class ArgumentParserExtd(argparse.ArgumentParser):
             bn = file_path
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-        if bn.endswith('.json'):
-            return json.loads(content)
-        elif bn.endswith(('.yaml', '.yml')):
-            return yaml.safe_load(content)
-        elif bn.endswith('.ini'):
-            config = configparser.ConfigParser()
-            config.read_string(content)
-            return {s: dict(config.items(s)) for s in config.sections() if s==ini_section}
-        elif bn.endswith('.toml'):
-            config = toml.loads(content)
-            return {s: dict(s.items()) for s in config.items() if s==toml_section}
-        else:
-            raise ValueError('Unsupported config file format: %s' % (file_path, ))
+
+                if bn.endswith('.json'):
+                    return json.loads(content, object_hook=cls.json_custom_object_hook)
+                elif bn.endswith(('.yaml', '.yml')):
+                    return cls.decode_bytes_base64(yaml.safe_load(content))
+                elif bn.endswith('.ini'):
+                    config = configparser.ConfigParser(allow_unnamed_section=True)
+                    config.optionxform = str
+                    config.read_string(content)
+
+                    # return {s: dict(config.items(s)) for s in config.sections() if s==ini_section}
+
+                    raw_contents = {}
+                    if isinstance(ini_section,str) and ini_section:
+                        flaten = dict(config[ini_section])
+                        raw_contents[ini_section] = cls.decode_bytes_base64(cls.unflatten_dict(flaten),
+                                                                            sep1='$$', sep2='%%', avoid_eq_in_key=True)
+                        return raw_contents.get(ini_section, {})
+
+                    for k in config.sections():
+                        flaten = dict(config[k])
+                        raw_contents[k] = cls.decode_bytes_base64(cls.unflatten_dict(flaten),
+                                                                  sep1='$$', sep2='%%', avoid_eq_in_key=True)
+                    return raw_contents
+
+                elif bn.endswith('.toml'):
+
+                    config = toml.loads(content)
+                    # return {s: dict(s.items()) for s in config.items() if s==toml_section}
+
+                    raw_contents = cls.decode_bytes_base64(config)
+
+                    if isinstance(toml_section,str) and toml_section:
+                        # return {s: raw_contents[s] for s in config.items() if s==toml_section}
+                        if isinstance(raw_contents[toml_section], dict):
+                            return { k: v for k,v in raw_contents[toml_section].items() }
+                        else:
+                            return {}
+                    return {s: raw_contents[s] for s in config.items()}
+
+                else:
+                    raise ValueError('Unsupported config file format: %s' % (file_path, ))
+
 
     @classmethod
     def open_compressed(cls, f_path, mode, encoding=None):
@@ -239,6 +425,15 @@ class ArgumentParserExtd(argparse.ArgumentParser):
             return lzma.open(f_path, mode, encoding=encoding)
         else:
             return open(f_path, mode, encoding=encoding)
+
+    @classmethod
+    def path_format_extsplit(cls, path):
+        bn0,ext0 = os.path.splitext(path)
+        bn1,ext1,ext0 = (os.path.splitext(bn0)+(ext0, )) if ext0 in cls.COMPRESS_EXT else (os.path.splitext(path)+('', ))
+        bn,ext   = (bn1,ext1) if ext1[1:] in cls.CONFIG_FORMAT else (bn1+ext1, '')
+        return (bn,
+                ext[1:]  if ext.startswith('.')  else ext,
+                ext0[1:] if ext0.startswith('.') else ext0)
         
     @classmethod
     def write_configfile(cls, f_path:str, data:dict, exclude_keys:list|tuple|set|dict=[],
@@ -270,30 +465,42 @@ class ArgumentParserExtd(argparse.ArgumentParser):
     @classmethod
     def dict_to_string(cls, data:dict={}, exclude_keys:list|tuple|set|dict=[],
                        output_format:str='json', json_indent=4,
-                       yaml_default_flow_style=False, ini_section='DEFAULT', toml_encoder=None, toml_section='DEFAULT'):
+                       yaml_default_flow_style=False, ini_section=INI_SECTION, toml_encoder=None, toml_section=TOML_SECTION):
 
         exclude_keys = exclude_keys.keys() if isinstance(exclude_keys,dict) else exclude_keys
         skim_data = {k: v for k, v in data.items() if k not in exclude_keys}
 
         if output_format.endswith('json'):
-            content = json.dumps(skim_data, indent=json_indent)
+            content = json.dumps(skim_data, indent=json_indent, default=cls.json_custom_serializer)
         elif output_format.endswith(('yaml', 'yml')):
-            content = yaml.dump(skim_data, default_flow_style=yaml_default_flow_style)
+            content = yaml.dump(cls.encode_bytes_base64(skim_data), default_flow_style=yaml_default_flow_style)
         elif output_format.endswith(('ini')):
             sio = io.StringIO()
-            config = configparser.ConfigParser()
-            for key, value in skim_data.items():
-                config[ini_section][key] = str(value)
+            config = configparser.ConfigParser(allow_unnamed_section=True)
+            config.optionxform = str
+            config[ini_section] = { str(k) : str(v) for k, v 
+                                    in cls.flatten_dict(cls.encode_bytes_base64(skim_data, sep1='$$', sep2='%%',
+                                                                                avoid_eq_in_key=True)).items() }
+            #for k, v in skim_data.items():
+            #    # config[ini_section][k] = str(v)
+            #    config[ini_section][str(k)] = { str(key): str(value)
+            #                                    for key, value in cls.flatten_dict(cls.encode_bytes_base64(v, sep1='$$', sep2='%%',
+            #                                                                                               avoid_eq_in_key=True)).items()}
             config.write(sio)
             content = sio.getvalue()
             sio.close()
+
         elif output_format.endswith(('toml')):
-            content = toml.dumps({toml_section : skim_data}, encoder=toml_encoder)
+            # content = toml.dumps({toml_section : skim_data}, encoder=toml_encoder)
+
+            content = toml.dumps(cls.encode_bytes_base64({toml_section : skim_data}),
+                                 encoder=toml_encoder)
         else:
             content = repr(skim_data)
             # raise ValueError('Unsupported config file format: %s' % (output_format, ))
-        return content
 
+
+        return content
 
     def args_to_string(self, exclude_keys:list|tuple|set|dict=[],
                        output_format:str='json'):
@@ -315,9 +522,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                              ini_section=self.__class__.INI_SECTION, toml_section=self.__class__.TOML_SECTION)
 
     def write_config(self, f_path:str, exclude_keys:list|tuple|set|dict=[],
-
-                     f_mode=0o644, mk_dir:bool=True, d_mode=0o755,
-                     json_indent=4, yaml_default_flow_style=False, ini_section='DEFAULT'):
+                     f_mode=0o644, mk_dir:bool=True, d_mode=0o755, **kwds):
         self.__class__.write_configfile(f_path=f_path, data=self.namespace.to_dict(), 
                                         exclude_keys=(self.write_config_exclude_default
                                                       + (exclude_keys.keys()
@@ -326,7 +531,8 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                         f_mode=f_mode, mk_dir=mk_dir, d_mode=d_mode,
                                         json_indent=self.json_indent,
                                         yaml_default_flow_style=self.yaml_default_flow_style,
-                                        ini_section=self.__class__.INI_SECTION, toml_section=self.__class__.TOML_SECTION)
+                                        ini_section=self.__class__.INI_SECTION, 
+                                        toml_section=self.__class__.TOML_SECTION)
         
 if __name__ == '__main__':
 
