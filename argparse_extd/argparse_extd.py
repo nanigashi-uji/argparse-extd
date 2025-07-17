@@ -317,7 +317,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
         if isinstance(self.option_key_alist['configfile'], str) and self.option_key_alist['configfile']:
             self.append_write_config_exclude(options=self.option_key_alist['configfile'])
 
-    def add_argument_save_config(self, short_opt:str='-S', long_opt:str='--save-config',
+    def add_argument_save_config(self, short_opt:str='-S', long_opt:str='--save-config', short_opt_def:str=None, 
                                  default_path:str=None, help_txt:str='path of the configuration file to be saved', **kwds):
         self.option_key_alist['save_configfile'], cargs = self.__class__.list_opt_arg(short_opt=short_opt,
                                                                                       long_opt=long_opt, dest=kwds.get('dest'))
@@ -329,9 +329,14 @@ class ArgumentParserExtd(argparse.ArgumentParser):
             self.append_write_config_exclude(options=self.option_key_alist['save_configfile'])
             dest_def=str(self.option_key_alist['save_configfile'])
             def_keywords = '-default'
-            self.add_argument("--"+dest_def.replace('_', '-')+def_keywords,
-                              dest=dest_def, action='store_const', const=default_path, 
-                              help=help_txt+("(Use default: %s )" % (default_path,)))
+            if isinstance(short_opt_def,str) and short_opt_def.startswith('-'):
+                self.add_argument(short_opt_def, "--"+dest_def.replace('_', '-')+def_keywords,
+                                  dest=dest_def, action='store_const', const=default_path, 
+                                  help=help_txt+("(Use default: %s )" % (default_path,)))
+            else:
+                self.add_argument("--"+dest_def.replace('_', '-')+def_keywords,
+                                  dest=dest_def, action='store_const', const=default_path, 
+                                  help=help_txt+("(Use default: %s )" % (default_path,)))
             self.append_write_config_exclude(options=self.option_key_alist['save_configfile']+def_keywords.replace('-', '_'))
 
     def save_config_action(self, exclude_keys:list|tuple|set|dict=[],
@@ -561,7 +566,7 @@ if __name__ == '__main__':
     argprsr.add_argument('-H', '--class-help', action='store_true', help='Show help for ArgumentParserExtd classes')
 
 
-    argprsr.add_argument('-s', '--skimmed-output', action='store_true', help='Active status')
+    argprsr.add_argument('-k', '--skimmed-output', action='store_true', help='Active status')
     argprsr.add_argument('-o', '--output', type=str, help='output filename') 
     argprsr.add_argument('-f', '--dump-format', type=str, choices=ArgumentParserExtd.CONFIG_FORMAT, default='json', help='Output format')
 
