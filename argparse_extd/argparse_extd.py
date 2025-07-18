@@ -342,12 +342,15 @@ class ArgumentParserExtd(argparse.ArgumentParser):
     def save_config_action(self, exclude_keys:list|tuple|set|dict=[],
                            f_mode=0o644, mk_dir:bool=True, d_mode=0o755, **kwds):
 
-        save_path=self.namespace[self.option_key_alist['save_configfile']]
-        if isinstance(save_path,str) and save_path:
-            self.write_config(f_path=save_path, 
-                              exclude_keys=exclude_keys,
-                              f_mode=f_mode, mk_dir=mk_dir, d_mode=d_mode, **kwds)
-
+        for skey in ('save_configfile', 'save_configfile_default'):
+            kd = self.option_key_alist.get(skey)
+            if kd is None:
+                continue
+            save_path=self.namespace[kd]
+            if isinstance(save_path,str) and save_path:
+                self.write_config(f_path=save_path, 
+                                  exclude_keys=exclude_keys,
+                                  f_mode=f_mode, mk_dir=mk_dir, d_mode=d_mode, **kwds)
 
     @classmethod
     def load_configfile(cls, namespace, conf_path, verbose=False,
