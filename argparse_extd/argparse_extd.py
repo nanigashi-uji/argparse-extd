@@ -55,6 +55,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
 
         @classmethod
         def from_json(cls, json_str:str):
+            __outer_scope__ = cls.__qualname__.removesuffix('.' + cls.__name__)
             return cls(**json.loads(json_str, object_hook=eval(__outer_scope__).json_custom_object_hook))
 
         def update_from_dict(self, data):
@@ -79,7 +80,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
         if isinstance(obj, dict) and cls.SERIALIZE_DICT_KEYS.issubset(obj):
             if obj[cls.SERIALIZE_KEY_TYPE] == 'bytes':
                 return base64.b64decode(obj[cls.SERIALIZE_KEY_VALUE].encode(encoding='utf-8'))
-            if obj[self.__class__.SERIALIZE_KEY_TYPE] == 'bytearray':
+            if obj[cls.SERIALIZE_KEY_TYPE] == 'bytearray':
                 return bytearray(base64.b64decode(obj[cls.SERIALIZE_KEY_VALUE].encode(encoding='utf-8')))
         return obj
 
@@ -115,12 +116,12 @@ class ArgumentParserExtd(argparse.ArgumentParser):
 
         type_hdr_t = sep1+cls.__name__+sep1+sep2+'tuple'+sep2+sep1
         if key.startswith(type_hdr_t) or key.startswith(type_hdr_t.lower()) :
-            return tuple(json.loads(key[len(type_hdr_b):].encode(encoding='utf-8'),
+            return tuple(json.loads(key[len(type_hdr_t):],
                                     object_hook=cls.json_custom_object_hook))
         
         type_hdr_f = sep1+cls.__name__+sep1+sep2+'frozenset'+sep2+sep1
         if key.startswith(type_hdr_f) or key.startswith(type_hdr_f.lower()) :
-            return frozenset(json.loads(key[len(type_hdr_f):].encode(encoding='utf-8'),
+            return frozenset(json.loads(key[len(type_hdr_f):],
                                         object_hook=cls.json_custom_object_hook))
         if avoid_eq_in_key:
             return key
@@ -202,7 +203,6 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                 current[keys[-1]] = v
         return result
 
-
     class ConfigActionExtd(argparse.Action):
         """
         class to read configuration file that is specified by commad line option
@@ -268,16 +268,22 @@ class ArgumentParserExtd(argparse.ArgumentParser):
 
     def add_argument_help(self, short_opt:str='-h', long_opt:str='--help',
                           help_text='show this help message and exit', **kwds):
+
         self.option_key_alist['help'], cargs = self.__class__.list_opt_arg(short_opt=short_opt,
                                                                            long_opt=long_opt, dest=kwds.get('dest'))
-        if len(cargs)>0:
-            self.add_argument(*cargs, action=kwds.get('action', 'store_true'), help=help_text, 
+
+        cxargs = [x for x in cargs if x not in self._option_string_actions]
+
+        if len(cxargs)>0:
+            self.add_argument(*cxargs, action=kwds.get('action', 'store_true'), help=help_text, 
                               **{k:v for k,v in kwds.items() if not k in ('action', 'help') })
+
         if isinstance(self.option_key_alist['help'], str) and self.option_key_alist['help']:
             self.append_write_config_exclude(options=self.option_key_alist['help'])
 
     def help_action(self):
-        if self.option_key_alist['help'] is not None and self.namespace[self.option_key_alist['help']]:
+        help_key = self.option_key_alist.get('help')
+        if help_key is not None and getattr(self.namespace, help_key, False):
             self.print_help()
             sys.exit(0)
 
@@ -286,8 +292,10 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                              help_text='show verbose messages', **kwds):
         self.option_key_alist['verbose'], cargs = self.__class__.list_opt_arg(short_opt=short_opt,
                                                                               long_opt=long_opt, dest=kwds.get('dest'))
-        if len(cargs)>0:
-            self.add_argument(*cargs, action=kwds.get('action', 'store_true'), help=help_text,
+        cxargs = [x for x in cargs if x not in self._option_string_actions]
+
+        if len(cxargs)>0:
+            self.add_argument(*cxargs, action=kwds.get('action', 'store_true'), help=help_text,
                               **{k:v for k,v in kwds.items() if not k in ('action', 'help') })
         if isinstance(self.option_key_alist['verbose'], str) and self.option_key_alist['verbose']:
             self.append_write_config_exclude(options=self.option_key_alist['verbose'])
@@ -297,8 +305,11 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                            help_text='supress verbose messages', **kwds):
         opt_dest = kwds.get('dest')
         self.option_key_alist['quiet'], cargs = self.__class__.list_opt_arg(short_opt=short_opt, long_opt=long_opt, dest=opt_dest)
-        if len(cargs)>0:
-            self.add_argument(*cargs, action=kwds.get('action', 
+
+        cxargs = [x for x in cargs if x not in self._option_string_actions]
+
+        if len(cxargs)>0:
+            self.add_argument(*cxargs, action=kwds.get('action', 
                                                       'store_false' if isinstance(opt_dest,str) and opt_dest else 'store_true'),
                               help=help_text, **{k:v for k,v in kwds.items() if not k in ('action', 'help') })
         if isinstance(self.option_key_alist['quiet'], str) and self.option_key_alist['quiet']:
@@ -309,11 +320,14 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                             help_txt:str='path of the configuration file to be loaded', **kwds):
         self.option_key_alist['configfile'], cargs = self.__class__.list_opt_arg(short_opt=short_opt,
                                                                     long_opt=long_opt, dest=kwds.get('dest'))
-        if len(cargs)>0:
-            self.add_argument(*cargs, type=str, action=self.__class__.ConfigActionExtd,
+
+        cxargs = [x for x in cargs if x not in self._option_string_actions]
+
+        if len(cxargs)>0:
+            self.add_argument(*cxargs, type=str, action=self.__class__.ConfigActionExtd,
                               help=help_txt,
                               **{k:v for k,v in kwds.items() if not k in ('action', 'help', 'type') })
-
+        
         if isinstance(self.option_key_alist['configfile'], str) and self.option_key_alist['configfile']:
             self.append_write_config_exclude(options=self.option_key_alist['configfile'])
 
@@ -321,28 +335,36 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                  default_path:str=None, help_txt:str='path of the configuration file to be saved', **kwds):
         self.option_key_alist['save_configfile'], cargs = self.__class__.list_opt_arg(short_opt=short_opt,
                                                                                       long_opt=long_opt, dest=kwds.get('dest'))
-        if len(cargs)>0:
-            self.add_argument(*cargs, type=str, nargs='?', default=None, const=default_path, help=help_txt,
-                              **{k:v for k,v in kwds.items() if not k in ('type', 'nargs', 'default', 'help')})
+        cxargs = [x for x in cargs if x not in self._option_string_actions]
 
+        if len(cxargs)>0:
+            self.add_argument(*cxargs, type=str, nargs='?', default=None, const=default_path, help=help_txt,
+                              **{k:v for k,v in kwds.items() if not k in ('type', 'nargs', 'default', 'const', 'help')})
+            
         if isinstance(self.option_key_alist['save_configfile'], str) and self.option_key_alist['save_configfile']:
             self.append_write_config_exclude(options=self.option_key_alist['save_configfile'])
             dest_def=str(self.option_key_alist['save_configfile'])
             def_keywords = '-default'
-            if isinstance(short_opt_def,str) and short_opt_def.startswith('-'):
-                self.add_argument(short_opt_def, "--"+dest_def.replace('_', '-')+def_keywords,
+            long_opt_def = "--"+dest_def.replace('_', '-')+def_keywords
+
+            dxargs = []
+            if ( isinstance(short_opt_def,str)
+                 and short_opt_def.startswith('-')
+                 and ( not short_opt_def in self._option_string_actions ) ) :
+                dxargs.append(short_opt_def)
+            if not long_opt_def in self._option_string_actions:
+                dxargs.append(long_opt_def)
+
+            if len(dxargs)>0:
+                self.add_argument(*dxargs,
                                   dest=dest_def, action='store_const', const=default_path, 
                                   help=help_txt+("(Use default: %s )" % (default_path,)))
-            else:
-                self.add_argument("--"+dest_def.replace('_', '-')+def_keywords,
-                                  dest=dest_def, action='store_const', const=default_path, 
-                                  help=help_txt+("(Use default: %s )" % (default_path,)))
-            self.append_write_config_exclude(options=self.option_key_alist['save_configfile']+def_keywords.replace('-', '_'))
+            self.append_write_config_exclude(options=(self.option_key_alist['save_configfile']+def_keywords).replace('-', '_'))
 
     def save_config_action(self, exclude_keys:list|tuple|set|dict=[],
                            f_mode=0o644, mk_dir:bool=True, d_mode=0o755, **kwds):
 
-        for skey in ('save_configfile', 'save_configfile_default'):
+        for skey in ('save_configfile', ):
             kd = self.option_key_alist.get(skey)
             if kd is None:
                 continue
@@ -371,56 +393,57 @@ class ArgumentParserExtd(argparse.ArgumentParser):
 
     @classmethod
     def read_config(cls, file_path:str, ini_section=INI_SECTION, toml_section=TOML_SECTION) -> dict:
-        bn,ext = os.path.splitext(file_path)
+        bn, ext = os.path.splitext(file_path)
         if ext.lower() in cls.COMPRESS_EXT:
             with cls.open_compressed(file_path, 'rt', encoding='utf-8') as f:
                 content = f.read()
+                bn = bn
         else:
-            bn = file_path
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+                bn = file_path
 
-                if bn.endswith('.json'):
-                    return json.loads(content, object_hook=cls.json_custom_object_hook)
-                elif bn.endswith(('.yaml', '.yml')):
-                    return cls.decode_bytes_base64(yaml.safe_load(content))
-                elif bn.endswith('.ini'):
-                    config = configparser.ConfigParser(allow_unnamed_section=True)
-                    config.optionxform = str
-                    config.read_string(content)
+        if bn.endswith('.json'):
+            return json.loads(content, object_hook=cls.json_custom_object_hook)
+        elif bn.endswith(('.yaml', '.yml')):
+            return cls.decode_bytes_base64(yaml.safe_load(content))
+        elif bn.endswith('.ini'):
+            if sys.version_info >= (3, 13):
+                config = configparser.ConfigParser(delimiters=('=',), allow_unnamed_section=True)
+            else:
+                config = configparser.ConfigParser(delimiters=('=',))
+                
+            config.optionxform = str
+            config.read_string(content)
 
-                    # return {s: dict(config.items(s)) for s in config.sections() if s==ini_section}
+            # return {s: dict(config.items(s)) for s in config.sections() if s==ini_section}
 
-                    raw_contents = {}
-                    if isinstance(ini_section,str) and ini_section:
-                        flaten = dict(config[ini_section])
-                        raw_contents[ini_section] = cls.decode_bytes_base64(cls.unflatten_dict(flaten),
-                                                                            sep1='$$', sep2='%%', avoid_eq_in_key=True)
-                        return raw_contents.get(ini_section, {})
+            raw_contents = {}
+            if isinstance(ini_section,str) and ini_section:
+                flaten = dict(config[ini_section])
+                raw_contents[ini_section] = cls.decode_bytes_base64(cls.unflatten_dict(flaten),
+                                                                        sep1='$$', sep2='%%', avoid_eq_in_key=True)
+                return raw_contents.get(ini_section, {})
 
-                    for k in config.sections():
-                        flaten = dict(config[k])
-                        raw_contents[k] = cls.decode_bytes_base64(cls.unflatten_dict(flaten),
+            for k in config.sections():
+                flaten = dict(config[k])
+                raw_contents[k] = cls.decode_bytes_base64(cls.unflatten_dict(flaten),
                                                                   sep1='$$', sep2='%%', avoid_eq_in_key=True)
-                    return raw_contents
+            return raw_contents
 
-                elif bn.endswith('.toml'):
-
-                    config = toml.loads(content)
-                    # return {s: dict(s.items()) for s in config.items() if s==toml_section}
-
-                    raw_contents = cls.decode_bytes_base64(config)
-
-                    if isinstance(toml_section,str) and toml_section:
-                        # return {s: raw_contents[s] for s in config.items() if s==toml_section}
-                        if isinstance(raw_contents[toml_section], dict):
-                            return { k: v for k,v in raw_contents[toml_section].items() }
-                        else:
-                            return {}
-                    return {s: raw_contents[s] for s in config.items()}
-
+        elif bn.endswith('.toml'):
+            config = toml.loads(content)
+            # return {s: dict(s.items()) for s in config.items() if s==toml_section}
+            raw_contents = cls.decode_bytes_base64(config)
+            if isinstance(toml_section,str) and toml_section:
+                # return {s: raw_contents[s] for s in config.items() if s==toml_section}
+                if isinstance(raw_contents.get(toml_section), dict):
+                    return { k: v for k,v in raw_contents[toml_section].items() }
                 else:
-                    raise ValueError('Unsupported config file format: %s' % (file_path, ))
+                    return {}
+            return {s: raw_contents[s] for s,v in config.items()}
+        else:
+            raise ValueError('Unsupported config file format: %s' % (file_path, ))
 
 
     @classmethod
@@ -482,9 +505,14 @@ class ArgumentParserExtd(argparse.ArgumentParser):
             content = json.dumps(skim_data, indent=json_indent, default=cls.json_custom_serializer)
         elif output_format.endswith(('yaml', 'yml')):
             content = yaml.dump(cls.encode_bytes_base64(skim_data), default_flow_style=yaml_default_flow_style)
-        elif output_format.endswith(('ini')):
+        elif output_format.endswith(('ini', )):
             sio = io.StringIO()
-            config = configparser.ConfigParser(allow_unnamed_section=True)
+
+            if sys.version_info >= (3, 13):
+                config = configparser.ConfigParser(delimiters=('=',), allow_unnamed_section=True)
+            else:
+                config = configparser.ConfigParser(delimiters=('=',))
+
             config.optionxform = str
             config[ini_section] = { str(k) : str(v) for k, v 
                                     in cls.flatten_dict(cls.encode_bytes_base64(skim_data, sep1='$$', sep2='%%',
@@ -498,12 +526,16 @@ class ArgumentParserExtd(argparse.ArgumentParser):
             content = sio.getvalue()
             sio.close()
 
-        elif output_format.endswith(('toml')):
-            # content = toml.dumps({toml_section : skim_data}, encoder=toml_encoder)
+        elif output_format.endswith(('toml', )):
 
-            content = toml.dumps(cls.encode_bytes_base64({toml_section : skim_data}),
-                                 encoder=toml_encoder)
+            toml_data = cls.encode_bytes_base64({toml_section: skim_data})
+            if toml_encoder is None:
+                content = toml.dumps(toml_data)
+            else:
+                content = toml.dumps(toml_data, encoder=toml_encoder)
+
         else:
+
             content = repr(skim_data)
             # raise ValueError('Unsupported config file format: %s' % (output_format, ))
 
@@ -589,8 +621,8 @@ if __name__ == '__main__':
         import pydoc,sys
         pydoc.help = pydoc.Helper(output=sys.stdout)
         help(ArgumentParserExtd)
-        help(ArgumentParserExtd.NamespaceExt)
-        help(ArgumentParserExtd.ConfigActionExt)
+        help(ArgumentParserExtd.NamespaceExtd)
+        help(ArgumentParserExtd.ConfigActionExtd)
         sys.exit()
 
     argprsr.save_config_action()
