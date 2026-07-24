@@ -220,7 +220,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
             else:
                 parser.error('Config file %s not found.' % (values, ))
 
-    def __init__(self, conf_path=None, exclude_save:str|list|set|tuple=None, 
+    def __init__(self, conf_path=None, exclude_save=None, # exclude_save:str|list|set|tuple
                  json_indent=4, yaml_default_flow_style=False,
                  ini_section=INI_SECTION, toml_section=TOML_SECTION, **kwds):
 
@@ -243,7 +243,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
     def args(self):
         return self.namespace
 
-    def append_write_config_exclude(self, options : str|list|tuple|set):
+    def append_write_config_exclude(self, options): #options : str|list|tuple|set
         for x in (options if isinstance(options, (list, tuple, set)) else (options, )):
             if (not isinstance(x, str)) or (not x):
                 continue
@@ -361,7 +361,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                   help=help_txt+("(Use default: %s )" % (default_path,)))
             self.append_write_config_exclude(options=(self.option_key_alist['save_configfile']+def_keywords).replace('-', '_'))
 
-    def save_config_action(self, exclude_keys:list|tuple|set|dict=[],
+    def save_config_action(self, exclude_keys=None, #exclude_keys:list|tuple|set|dict
                            f_mode=0o644, mk_dir:bool=True, d_mode=0o755, **kwds):
 
         for skey in ('save_configfile', ):
@@ -467,7 +467,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                 ext0[1:] if ext0.startswith('.') else ext0)
         
     @classmethod
-    def write_configfile(cls, f_path:str, data:dict, exclude_keys:list|tuple|set|dict=[],
+    def write_configfile(cls, f_path:str, data:dict, exclude_keys=None, #exclude_keys:list|tuple|set|dict
                          f_mode=0o644, mk_dir:bool=True, d_mode=0o755,
                          json_indent=4, yaml_default_flow_style=False, ini_section='DEFAULT', toml_section='DEFAULT'):
         if (not isinstance(f_path, str)) or len(f_path)<1:
@@ -494,10 +494,14 @@ class ArgumentParserExtd(argparse.ArgumentParser):
         os.chmod(f_path, f_mode)
 
     @classmethod
-    def dict_to_string(cls, data:dict={}, exclude_keys:list|tuple|set|dict=[],
+    def dict_to_string(cls, data:dict=None, exclude_keys=None, #exclude_keys:list|tuple|set|dict
                        output_format:str='json', json_indent=4,
                        yaml_default_flow_style=False, ini_section=INI_SECTION, toml_encoder=None, toml_section=TOML_SECTION):
 
+        if exclude_keys is None:
+            exclude_keys = []
+        if data is None:
+            data = {}
         exclude_keys = exclude_keys.keys() if isinstance(exclude_keys,dict) else exclude_keys
         skim_data = {k: v for k, v in data.items() if k not in exclude_keys}
 
@@ -542,7 +546,7 @@ class ArgumentParserExtd(argparse.ArgumentParser):
 
         return content
 
-    def args_to_string(self, exclude_keys:list|tuple|set|dict=[],
+    def args_to_string(self, exclude_keys=None, # exclude_keys:list|tuple|set|dict
                        output_format:str='json'):
         return self.__class__.dict_to_string(data=self.namespace.to_dict(),
                                              exclude_keys=exclude_keys,
@@ -550,8 +554,10 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                              yaml_default_flow_style=self.yaml_default_flow_style,
                                              ini_section=self.__class__.INI_SECTION, toml_section=self.__class__.TOML_SECTION)
 
-    def skimmed_args_to_string(self, exclude_keys:list|tuple|set|dict=[],
+    def skimmed_args_to_string(self, exclude_keys=None, #exclude_keys:list|tuple|set|dict
                                output_format:str='json'):
+        if exclude_keys is None:
+            exclude_keys = []
         return self.__class__.dict_to_string(data=self.namespace.to_dict(),
                                              exclude_keys=(self.write_config_exclude_default
                                                            + (exclude_keys.keys()
@@ -561,8 +567,10 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                              yaml_default_flow_style=self.yaml_default_flow_style,
                                              ini_section=self.__class__.INI_SECTION, toml_section=self.__class__.TOML_SECTION)
 
-    def write_config(self, f_path:str, exclude_keys:list|tuple|set|dict=[],
+    def write_config(self, f_path:str, exclude_keys=None, # exclude_keys:list|tuple|set|dict
                      f_mode=0o644, mk_dir:bool=True, d_mode=0o755, **kwds):
+        if exclude_keys is None:
+            exclude_keys = []
         self.__class__.write_configfile(f_path=f_path, data=self.namespace.to_dict(), 
                                         exclude_keys=(self.write_config_exclude_default
                                                       + (exclude_keys.keys()
