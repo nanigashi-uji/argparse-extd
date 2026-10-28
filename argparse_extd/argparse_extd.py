@@ -221,14 +221,20 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                 parser.error('Config file %s not found.' % (values, ))
 
     def __init__(self, conf_path=None, exclude_save=None, # exclude_save:str|list|set|tuple
-                 json_indent=4, yaml_default_flow_style=False,
+                 json_indent=4, json_ensure_ascii=False, json_allow_nan=True, json_sort_keys=False,
+                 yaml_default_flow_style=False, yaml_allow_unicode=True, yaml_sort_keys=False,
                  ini_section=INI_SECTION, toml_section=TOML_SECTION, **kwds):
 
         super().__init__(**kwds)
         self.option_key_alist        = {}
         self.namespace               = self.__class__.NamespaceExtd()
-        self.json_indent             = json_indent 
+        self.json_indent             = json_indent
+        self.json_ensure_ascii       = json_ensure_ascii
+        self.json_allow_nan          = json_allow_nan
+        self.json_sort_keys          = json_sort_keys
         self.yaml_default_flow_style = yaml_default_flow_style
+        self.yaml_allow_unicode      = yaml_allow_unicode
+        self.yaml_sort_keys          = yaml_sort_keys
         self.load_config(conf_path)
         self.write_config_exclude_default = []
         self.append_write_config_exclude(options=exclude_save)
@@ -469,7 +475,9 @@ class ArgumentParserExtd(argparse.ArgumentParser):
     @classmethod
     def write_configfile(cls, f_path:str, data:dict, exclude_keys=None, #exclude_keys:list|tuple|set|dict
                          f_mode=0o644, mk_dir:bool=True, d_mode=0o755,
-                         json_indent=4, yaml_default_flow_style=False, ini_section='DEFAULT', toml_section='DEFAULT'):
+                         json_indent=4, json_ensure_ascii=False, json_allow_nan=True, json_sort_keys=False,
+                         yaml_default_flow_style=False, yaml_allow_unicode=True, yaml_sort_keys=False,
+                         ini_section='DEFAULT', toml_section='DEFAULT'):
         if (not isinstance(f_path, str)) or len(f_path)<1:
             return
 
@@ -485,8 +493,10 @@ class ArgumentParserExtd(argparse.ArgumentParser):
             
         content = cls.dict_to_string(data=data,exclude_keys=exclude_keys,
                                      output_format=os.path.splitext(bn)[1],
-                                     json_indent=json_indent,
+                                     json_indent=json_indent, json_ensure_ascii=json_ensure_ascii,
+                                     json_allow_nan=json_allow_nan, json_sort_keys=json_sort_keys,
                                      yaml_default_flow_style=yaml_default_flow_style,
+                                     yaml_allow_unicode=yaml_allow_unicode, yaml_sort_keys=yaml_sort_keys,
                                      ini_section=ini_section, toml_section=toml_section)
 
         with cls.open_compressed(f_path, 'wt', encoding='utf-8') as f:
@@ -496,7 +506,9 @@ class ArgumentParserExtd(argparse.ArgumentParser):
     @classmethod
     def dict_to_string(cls, data:dict=None, exclude_keys=None, #exclude_keys:list|tuple|set|dict
                        output_format:str='json', json_indent=4,
-                       yaml_default_flow_style=False, ini_section=INI_SECTION, toml_encoder=None, toml_section=TOML_SECTION):
+                       json_ensure_ascii=False, json_allow_nan=True, json_sort_keys=False, 
+                       yaml_default_flow_style=False, yaml_allow_unicode=True, yaml_sort_keys=False,
+                       ini_section=INI_SECTION, toml_encoder=None, toml_section=TOML_SECTION):
 
         if exclude_keys is None:
             exclude_keys = []
@@ -506,9 +518,14 @@ class ArgumentParserExtd(argparse.ArgumentParser):
         skim_data = {k: v for k, v in data.items() if k not in exclude_keys}
 
         if output_format.endswith('json'):
-            content = json.dumps(skim_data, indent=json_indent, default=cls.json_custom_serializer)
+            content = json.dumps(skim_data,
+                                 indent=json_indent, ensure_ascii=json_ensure_ascii,
+                                 allow_nan=json_allow_nan, sort_keys=json_sort_keys,
+                                 default=cls.json_custom_serializer)
         elif output_format.endswith(('yaml', 'yml')):
-            content = yaml.dump(cls.encode_bytes_base64(skim_data), default_flow_style=yaml_default_flow_style)
+            content = yaml.dump(cls.encode_bytes_base64(skim_data),
+                                default_flow_style=yaml_default_flow_style,
+                                allow_unicode=yaml_allow_unicode, sort_keys=yaml_sort_keys)
         elif output_format.endswith(('ini', )):
             sio = io.StringIO()
 
@@ -549,9 +566,11 @@ class ArgumentParserExtd(argparse.ArgumentParser):
     def args_to_string(self, exclude_keys=None, # exclude_keys:list|tuple|set|dict
                        output_format:str='json'):
         return self.__class__.dict_to_string(data=self.namespace.to_dict(),
-                                             exclude_keys=exclude_keys,
-                                             output_format=output_format, json_indent=self.json_indent,
+                                             exclude_keys=exclude_keys, output_format=output_format,
+                                             json_indent=self.json_indent, json_ensure_ascii=self.json_ensure_ascii,
+                                             json_allow_nan=self.json_allow_nan, json_sort_keys=self.json_sort_keys,
                                              yaml_default_flow_style=self.yaml_default_flow_style,
+                                             yaml_allow_unicode=self.yaml_allow_unicode, yaml_sort_keys=self.yaml_sort_keys,
                                              ini_section=self.__class__.INI_SECTION, toml_section=self.__class__.TOML_SECTION)
 
     def skimmed_args_to_string(self, exclude_keys=None, #exclude_keys:list|tuple|set|dict
@@ -563,8 +582,11 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                                            + (exclude_keys.keys()
                                                               if isinstance(exclude_keys,dict)
                                                               else exclude_keys)),
-                                             output_format=output_format, json_indent=self.json_indent,
+                                             output_format=output_format,
+                                             json_indent=self.json_indent, json_ensure_ascii=self.json_ensure_ascii,
+                                             json_allow_nan=self.json_allow_nan, json_sort_keys=self.json_sort_keys,
                                              yaml_default_flow_style=self.yaml_default_flow_style,
+                                             yaml_allow_unicode=self.yaml_allow_unicode, yaml_sort_keys=self.yaml_sort_keys,
                                              ini_section=self.__class__.INI_SECTION, toml_section=self.__class__.TOML_SECTION)
 
     def write_config(self, f_path:str, exclude_keys=None, # exclude_keys:list|tuple|set|dict
@@ -577,8 +599,10 @@ class ArgumentParserExtd(argparse.ArgumentParser):
                                                          if isinstance(exclude_keys,dict)
                                                          else exclude_keys)),
                                         f_mode=f_mode, mk_dir=mk_dir, d_mode=d_mode,
-                                        json_indent=self.json_indent,
+                                        json_indent=self.json_indent, json_ensure_ascii=self.json_ensure_ascii,
+                                        json_allow_nan=self.json_allow_nan, json_sort_keys=self.json_sort_keys,
                                         yaml_default_flow_style=self.yaml_default_flow_style,
+                                        yaml_allow_unicode=self.yaml_allow_unicode, yaml_sort_keys=self.yaml_sort_keys,
                                         ini_section=self.__class__.INI_SECTION, 
                                         toml_section=self.__class__.TOML_SECTION)
         
